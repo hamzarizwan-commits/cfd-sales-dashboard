@@ -1,0 +1,46 @@
+# Credentials & config
+redshift_config.ini
+
+# Data files (may contain sensitive client data)
+*.csv
+*.json
+
+# Scratch / exploratory scripts
+match_jarvis_view*.py
+pend_ren*.py
+pend_run*.py
+decode_march*.py
+find_*.py
+check_renewals_fix.py
+reconcile_*.py
+build_sales_report.py
+dashboard_refresh_loop.py
+refresh_cfd_vm.py
+fix_cfd.py
+build_cfd.py
+build_cfd_merged.py
+rebuild_cfd.py
+merge_dash.py
+merge_dashboards.py
+fetch_meetings_data.py
+analyze_pending_renewals.py
+pending_renewals_*.py
+pending_renewals_combined.py
+
+# Logs
+*.log
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Windows
+Thumbs.db
+Desktop.ini
+ntuser.ini
+NTUSER.DAT*
+
+# HTML drafts (keep only MERGED)
+CFD_Sales_Dashboard_2026.html
+packages_mom_chart.html
