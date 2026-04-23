@@ -2,6 +2,7 @@
 Build Manager and Team Lead performance views for Jan 2026 onwards (auto-extending monthly).
 Uses jarvis_empg + podl_bayutsa as data sources.
 """
+import signal; signal.signal(signal.SIGINT, signal.SIG_IGN)
 from redshift_client import run_query
 import pandas as pd
 import numpy as np
@@ -1260,3 +1261,175 @@ for _bucket, _ctypes in _disc_acc.items():
 with open('C:/Users/hamza.rizwan/pkg_discount_by_filter.json', 'w') as f:
     json.dump(_pkg_disc_out, f, separators=(',', ':'))
 print(f"  Package discount by filter saved: {len(_pkg_disc_out)} buckets, client types: all/new/renewal")
+
+# ============================================================
+# DAILY METRICS PER CONSULTANT (for day-level date filter)
+# ============================================================
+print("\nPulling daily metrics per consultant (Jan 2026 – today)...")
+_dm_start = '2026-01-01'
+_dm_end   = (date.today() + relativedelta(days=1)).strftime('%Y-%m-%d')
+
+_daily_cash_df = run_query(f"""
+SELECT DATE_TRUNC('day', p.collected_at)::date AS dt,
+       s.email,
+       SUM(p.net_amount) AS cash
+FROM   jarvis_empg.jarvis_empg__crm_payments p
+JOIN   podl_bayutsa.dim_staff s ON p.collected_by_id = s.jarvis_id
+WHERE  s.email LIKE '%%@bayut.sa'
+  AND  (p.operation_type IS NULL OR p.operation_type != 'delete')
+  AND  p.deleted_at IS NULL
+  AND  p.collected_at >= '{_dm_start}' AND p.collected_at < '{_dm_end}'
+GROUP BY dt, s.email
+""")
+
+_daily_pkg_df = run_query(f"""
+SELECT DATE_TRUNC('day', c.date_sign_nk)::date AS dt,
+       s.email,
+       COUNT(*) AS pkg
+FROM   podl_bayutsa.dim_contracts c
+JOIN   podl_bayutsa.dim_staff s ON c.assignee_staff_sk = s.staff_sk
+WHERE  s.email LIKE '%%@bayut.sa'
+  AND  c.contract_category_sk NOT LIKE '%%82'
+  AND  c.contract_category_sk NOT LIKE '%%89'
+  AND  c.date_sign_nk >= '{_dm_start}' AND c.date_sign_nk < '{_dm_end}'
+GROUP BY dt, s.email
+""")
+
+_daily_calls_df = run_query(f"""
+SELECT DATE_TRUNC('day', c.time_call_started_local)::date AS dt,
+       s.email,
+       COUNT(DISTINCT CASE WHEN c.connected_duration >= 60 THEN c.account_sk END) AS uqc,
+       ROUND(SUM(c.connected_duration) / 60.0, 2) AS dtt
+FROM   podl_bayutsa.fact_calltracking_staff_logs c
+JOIN   podl_bayutsa.dim_staff s ON c.staff_sk = s.staff_sk
+WHERE  s.email LIKE '%%@bayut.sa'
+  AND  c.call_type IN ('in', 'out') AND c.account_sk != 'unknown'
+  AND  c.date_call_nk >= '{_dm_start}' AND c.date_call_nk < '{_dm_end}'
+GROUP BY dt, s.email
+""")
+
+_daily_vm_df = run_query(f"""
+SELECT DATE_TRUNC('day', ts.achieved_at)::date AS dt,
+       s.email,
+       COUNT(DISTINCT task.client_id) AS vm
+FROM   jarvis_empg.jarvis_empg__crm_target_summaries ts
+JOIN   jarvis_empg.jarvis_empg__crm_tasks task ON ts.achievable_id = task.id
+JOIN   podl_bayutsa.dim_staff s ON ts.user_id = s.jarvis_id
+WHERE  s.email LIKE '%%@bayut.sa'
+  AND  ts.target_type_id = 115
+  AND  (ts.operation_type IS NULL OR ts.operation_type != 'delete')
+  AND  ts.achieved_at >= '{_dm_start}' AND ts.achieved_at < '{_dm_end}'
+GROUP BY dt, s.email
+""")
+
+for _df_ in [_daily_cash_df, _daily_pkg_df, _daily_calls_df, _daily_vm_df]:
+    _df_['dt'] = _df_['dt'].astype(str)
+
+_dm_merged = (_daily_cash_df
+    .merge(_daily_pkg_df,   on=['dt','email'], how='outer')
+    .merge(_daily_calls_df, on=['dt','email'], how='outer')
+    .merge(_daily_vm_df,    on=['dt','email'], how='outer')
+    .fillna(0))
+_dm_merged['cash'] = _dm_merged['cash'].round(2)
+_dm_merged['dtt']  = _dm_merged['dtt'].round(2)
+for _c in ['pkg','uqc','vm']:
+    _dm_merged[_c] = _dm_merged[_c].astype(int)
+
+daily_metrics = {}
+for _, _r in _dm_merged.iterrows():
+    _em = str(_r['email'])
+    if _em not in daily_metrics:
+        daily_metrics[_em] = []
+    daily_metrics[_em].append([_r['dt'], round(float(_r['cash']),2), int(_r['pkg']), int(_r['uqc']), round(float(_r['dtt']),2), int(_r['vm'])])
+for _em in daily_metrics:
+    daily_metrics[_em].sort(key=lambda x: x[0])
+
+with open('C:/Users/hamza.rizwan/daily_metrics_2026.json', 'w') as f:
+    json.dump(daily_metrics, f, separators=(',', ':'))
+print(f"  Daily metrics saved: {len(daily_metrics)} consultants, {len(_dm_merged)} day-rows")
+
+# ============================================================
+# ACTIVE LISTINGS SNAPSHOT (for Overview tile)
+# ============================================================
+print("\nPulling active listings snapshot...")
+_al_df = run_query("""
+SELECT l.user_email_address AS email,
+       COUNT(*) AS active_listings,
+       COUNT(DISTINCT l.account_sk) AS active_agencies
+FROM   podl_bayutsa.fact_listings l
+WHERE  l.listing_status_sk = 'active'
+  AND  l.user_email_address LIKE '%@bayut.sa'
+GROUP BY l.user_email_address
+""")
+_al_total_df = run_query("""
+SELECT COUNT(*) AS total_active
+FROM   podl_bayutsa.fact_listings
+WHERE  listing_status_sk = 'active'
+""")
+_total_active_listings = int(_al_total_df['total_active'].iloc[0])
+
+# Zero posters: consultants who have active assigned clients but zero active listings
+# Use current consultant pool from latest month in df
+_latest_mn_staff = df[df['month'] == df['month'].max()]['staff_email'].dropna().unique()
+_al_by_email = _al_df.set_index('email')
+_zero_posters = {}
+_cons_active_listings = {}
+_cons_active_agencies = {}
+for _em in _al_by_email.index:
+    _cons_active_listings[_em] = int(_al_by_email.loc[_em, 'active_listings'])
+    _cons_active_agencies[_em] = int(_al_by_email.loc[_em, 'active_agencies'])
+
+# Zero posters: consultants in latest DATA with zero listings
+for _em in _latest_mn_staff:
+    if _em not in _al_by_email.index or _al_by_email.loc[_em, 'active_listings'] == 0:
+        # Count their assigned clients as "zero poster" weight
+        _rows = df[(df['staff_email'] == _em) & (df['month'] == df['month'].max())]
+        _assigned = int(_rows['current_assigned_clients'].sum()) if len(_rows) > 0 else 0
+        if _assigned > 0:
+            _zero_posters[_em] = _assigned
+
+active_listings_snapshot = {
+    'total': _total_active_listings,
+    'by_consultant': _cons_active_listings,
+    'agencies_by_consultant': _cons_active_agencies,
+    'zero_posters': _zero_posters
+}
+with open('C:/Users/hamza.rizwan/active_listings_snapshot.json', 'w') as f:
+    json.dump(active_listings_snapshot, f, separators=(',', ':'))
+print(f"  Active listings snapshot saved: total={_total_active_listings}, consultants={len(_cons_active_listings)}")
+
+# ============================================================
+# CONSULTANT AVG MEETING DURATION (Jan 2026 – today)
+# ============================================================
+print("\nPulling consultant avg meeting duration...")
+_mtg_dur_df = run_query(f"""
+WITH field_consultants AS (
+    SELECT DISTINCT s.email, s.jarvis_id
+    FROM   podl_bayutsa.dim_staff s
+    JOIN   podl_bayutsa.dim_teams t ON s.team_sk = t.team_sk
+    WHERE  s.email LIKE '%%@bayut.sa'
+      AND  t.team_name_en NOT LIKE '%%Telesales%%'
+      AND  s.jarvis_id != t.team_lead_staff_sk
+),
+mtg_dur AS (
+    SELECT m.assignee_id,
+           SUM(DATEDIFF('minute', ci.checked_in_at, ci.completed_at)) AS total_minutes,
+           COUNT(*) AS mtg_count
+    FROM   jarvis_empg.jarvis_empg__crm_meetings m
+    JOIN   jarvis_empg.jarvis_empg__crm_check_ins ci ON ci.meeting_id = m.id
+    WHERE  m.start_date >= '{_dm_start}' AND m.start_date < '{_dm_end}'
+      AND  ci.completed_at IS NOT NULL
+      AND  (m.operation_type IS NULL OR m.operation_type != 'delete')
+      AND  (ci.operation_type IS NULL OR ci.operation_type != 'delete')
+    GROUP BY m.assignee_id
+)
+SELECT fc.email,
+       ROUND(md.total_minutes::float / md.mtg_count, 1) AS avg_duration_min
+FROM   mtg_dur md
+JOIN   field_consultants fc ON md.assignee_id = fc.jarvis_id
+WHERE  md.mtg_count >= 5
+""")
+consultant_avg_mtg_duration = dict(zip(_mtg_dur_df['email'], _mtg_dur_df['avg_duration_min'].round(1)))
+with open('C:/Users/hamza.rizwan/consultant_avg_mtg_duration.json', 'w') as f:
+    json.dump(consultant_avg_mtg_duration, f, separators=(',', ':'))
+print(f"  Avg meeting duration saved: {len(consultant_avg_mtg_duration)} consultants")

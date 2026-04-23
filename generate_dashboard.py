@@ -88,6 +88,43 @@ else:
     _daily_coll_json = '{}'
     print("Daily collections file not found — trend chart will be empty")
 
+# Load daily per-consultant metrics (for day-level date filter)
+_daily_metrics_path = 'C:/Users/hamza.rizwan/daily_metrics_2026.json'
+if os.path.exists(_daily_metrics_path):
+    with open(_daily_metrics_path, 'r') as _f:
+        _daily_metrics_json = _f.read()
+    print(f"Daily metrics loaded from {_daily_metrics_path}")
+else:
+    _daily_metrics_json = '{}'
+    print("Daily metrics file not found — date filter will use month granularity")
+
+# Load active listings snapshot
+_al_snap_path = 'C:/Users/hamza.rizwan/active_listings_snapshot.json'
+if os.path.exists(_al_snap_path):
+    with open(_al_snap_path, 'r') as _f:
+        _al_snap = json.load(_f)
+    _total_active_listings_val = _al_snap.get('total', 0)
+    _cons_active_listings_json = json.dumps(_al_snap.get('by_consultant', {}), separators=(',',':'))
+    _cons_active_agencies_json = json.dumps(_al_snap.get('agencies_by_consultant', {}), separators=(',',':'))
+    _zero_posters_json = json.dumps(_al_snap.get('zero_posters', {}), separators=(',',':'))
+    print(f"Active listings snapshot loaded: total={_total_active_listings_val}")
+else:
+    _total_active_listings_val = 0
+    _cons_active_listings_json = '{}'
+    _cons_active_agencies_json = '{}'
+    _zero_posters_json = '{}'
+    print("Active listings snapshot not found — using defaults")
+
+# Load consultant avg meeting duration
+_mtg_dur_path = 'C:/Users/hamza.rizwan/consultant_avg_mtg_duration.json'
+if os.path.exists(_mtg_dur_path):
+    with open(_mtg_dur_path, 'r') as _f:
+        _consultant_avg_mtg_duration_json = _f.read()
+    print(f"Consultant avg meeting duration loaded from {_mtg_dur_path}")
+else:
+    _consultant_avg_mtg_duration_json = '{}'
+    print("Consultant avg meeting duration file not found")
+
 _pkg_mix_path = 'C:/Users/hamza.rizwan/package_mix_2026.json'
 if os.path.exists(_pkg_mix_path):
     with open(_pkg_mix_path, 'r') as _f:
@@ -332,6 +369,15 @@ tbody td{{padding:9px 13px;vertical-align:middle}}
 {_month_options_html}      </select>
     </div>
     <div class="filter-group">
+      <div class="filter-label">Date Range</div>
+      <div class="ov-date-row">
+        <input type="date" id="f-date-from" class="ov-date-input" placeholder="From" oninput="_onDateFilter()" onchange="_onDateFilter()" />
+        <span class="ov-date-sep">to</span>
+        <input type="date" id="f-date-to" class="ov-date-input" placeholder="To" oninput="_onDateFilter()" onchange="_onDateFilter()" />
+        <button class="ov-date-clear-btn" id="ov-date-clear-btn" onclick="_clearDateFilter()" style="display:none" title="Clear dates">&#10005;</button>
+      </div>
+    </div>
+    <div class="filter-group">
       <div class="filter-label">Team Type</div>
       <select id="f-type" onchange="render()">
         <option value="all">All</option>
@@ -534,6 +580,12 @@ tbody td{{padding:9px 13px;vertical-align:middle}}
 const DATA = {data_json};
 const DAILY_COLL = {_daily_coll_json};
 const PKG_MIX = {_pkg_mix_json};
+const DAILY_METRICS = {_daily_metrics_json};
+const TOTAL_ACTIVE_LISTINGS_SNAPSHOT = {_total_active_listings_val};
+const CONSULTANT_ACTIVE_LISTINGS = {_cons_active_listings_json};
+const CONSULTANT_ACTIVE_AGENCIES = {_cons_active_agencies_json};
+const ZERO_POSTERS = {_zero_posters_json};
+const CONSULTANT_AVG_MTG_DURATION = {_consultant_avg_mtg_duration_json};
 
 // Active clients at EOM per month, split by region (Redshift CRM snapshot, status=375, not deleted)
 const ACTIVE_CLIENTS_BY_REGION = {{
@@ -691,14 +743,18 @@ function reportCard(title, subtitle, m, isTS, tlBreakdown, extraClass, hideRoste
     ? `<div class="rc-section-title">Activity (Avg / Day)</div>
     ${{rc('UQC / Day', m.avgUqc.toFixed(1), 'Unique Qualified Calls per working day (avg)', 'Total this period: '+m.totalUqc.toLocaleString()+' UQC')}}
     ${{rc('DTT / Day', m.avgDtt.toFixed(1)+' mins', 'Daily Talk Time per working day in minutes (avg)', 'Total this period: '+fmt(m.totalDtt)+' min')}}
-    ${{isTS ? '' : rc('VM / Day', m.avgVm!==null ? m.avgVm.toFixed(1) : 'N/A', 'Verified in-person meetings per working day (avg)', m.avgVm!==null ? 'Total this period: '+m.totalUvm.toLocaleString()+' meetings' : '') }}`
+    ${{isTS ? '' : rc('VM / Day', m.avgVm!==null ? m.avgVm.toFixed(1) : 'N/A', 'Verified in-person meetings per working day (avg)', m.avgVm!==null ? 'Total this period: '+m.totalVm.toLocaleString()+' meetings' : '')}}
+    ${{isTS ? '' : rc('Avg Mtg Duration', m.avgMeetingDuration !== null ? m.avgMeetingDuration.toFixed(1)+' min' : 'N/A', 'Average verified meeting duration Jan–Apr 2026 (field sales consultants only)')}}
+    ${{isTS ? '' : rc('Meetings / Sale', m.meetingsPerSale !== null ? m.meetingsPerSale.toFixed(1) : 'N/A', 'Unique verified client visits ÷ packages sold (same sources as Overview tab)')}}`
     : `<div class="rc-section-title">Activity (Avg/Day)</div>
     ${{rc('UQC / Day', m.avgUqc.toFixed(1), 'Unique Qualified Calls per working day (avg)', 'Total this period: '+m.totalUqc.toLocaleString()+' UQC')}}
     ${{rc('DTT / Day', m.avgDtt.toFixed(1)+' min', 'Daily Talk Time per working day in minutes (avg)', 'Total this period: '+fmt(m.totalDtt)+' min')}}
-    ${{isTS ? '' : rc('VM / Day', m.avgVm!==null ? m.avgVm.toFixed(1) : 'N/A', 'Verified in-person meetings per working day (avg)', m.avgVm!==null ? 'Total this period: '+m.totalUvm.toLocaleString()+' meetings' : '')}}
+    ${{isTS ? '' : rc('VM / Day', m.avgVm!==null ? m.avgVm.toFixed(1) : 'N/A', 'Verified in-person meetings per working day (avg)', m.avgVm!==null ? 'Total this period: '+m.totalVm.toLocaleString()+' meetings' : '')}}
+    ${{isTS ? '' : rc('Avg Mtg Duration', m.avgMeetingDuration !== null ? m.avgMeetingDuration.toFixed(1)+' min' : 'N/A', 'Average verified meeting duration Jan–Apr 2026 (field sales consultants only)')}}
+    ${{isTS ? '' : rc('Meetings / Sale', m.meetingsPerSale !== null ? m.meetingsPerSale.toFixed(1) : 'N/A', 'Unique verified client visits ÷ packages sold (same sources as Overview tab)')}}
     ${{rc('Total UQC', m.totalUqc.toLocaleString(), 'Total unique qualified calls made this period')}}
     ${{rc('Total DTT', fmt(m.totalDtt)+' min', 'Total daily talk time accumulated this period (minutes)')}}
-    ${{isTS ? '' : rc('Total UVM', m.totalUvm.toLocaleString(), 'Total verified in-person meetings this period')}}`;
+    ${{isTS ? '' : rc('Total VMs', m.totalVm.toLocaleString(), 'Total verified in-person meetings this period')}}`;
   const bodyHtml = horizontal
     ? `<div style="display:flex;gap:0;align-items:stretch;margin-top:10px">
         <div style="flex:1;display:flex;flex-direction:column;justify-content:space-between">
@@ -777,12 +833,24 @@ function calcMetrics(pool) {{
   // Totals — full pool (including leaders)
   const totalUqc = pool.reduce((s,r) => s+r.uqc, 0);
   const totalDtt = pool.reduce((s,r) => s+r.dtt, 0);
-  const totalUvm = pool.reduce((s,r) => s+r.uvm, 0);
+  const totalVm  = pool.reduce((s,r) => s+(r.vm||r.uvm||0), 0);
+  const totalUvm = totalVm;
+
+  // Per-consultant snapshot lookups (unique emails for current pool)
+  const uniqueEmails = [...new Set(pool.map(r => r.email).filter(Boolean))];
+  const zeroPosters = uniqueEmails.reduce((s,e) => s+(ZERO_POSTERS[e]||0), 0);
+  const totalActiveListings = uniqueEmails.reduce((s,e) => s+(CONSULTANT_ACTIVE_LISTINGS[e]||0), 0);
+  const totalActiveAgencies = uniqueEmails.reduce((s,e) => s+(CONSULTANT_ACTIVE_AGENCIES[e]||0), 0);
+  const listingsPerAgency = totalActiveAgencies > 0 ? Math.round(totalActiveListings/totalActiveAgencies*10)/10 : null;
+  const _mtgDurs = uniqueEmails.map(e => CONSULTANT_AVG_MTG_DURATION[e]).filter(v => v !== undefined);
+  const avgMeetingDuration = _mtgDurs.length > 0 ? Math.round(_mtgDurs.reduce((s,v)=>s+v,0)/_mtgDurs.length*10)/10 : null;
+  const meetingsPerSale = pkgSold > 0 ? Math.round(totalVm/pkgSold*10)/10 : null;
 
   return {{ active:active.length, bom:withTarget.length, productive:productive.length,
     cash, target, tva, pkgSold, avgDisc, netGain, cov, assigned, renewed, pendRen, renRate,
-    avgUqc, avgDtt, avgVm, totalUqc, totalDtt, totalUvm, poolSize:pool.length,
-    membersCount:members.length,
+    avgUqc, avgDtt, avgVm, totalUqc, totalDtt, totalVm, totalUvm, poolSize:pool.length,
+    membersCount:members.length, zeroPosters, totalActiveListings, totalActiveAgencies,
+    listingsPerAgency, avgMeetingDuration, meetingsPerSale,
     productivity: withTarget.length > 0 ? productive.length/withTarget.length*100 : 0,
     covPct: assigned > 0 ? cov/assigned*100 : 0
   }};
@@ -814,6 +882,62 @@ let collChart, tvaChart, trendChart, pkgOvChart;
 // ── Overview drill-down state ──
 let _ovDrillMonth = 0;   // 0 = top level
 let _ovDrillMgr   = '';  // '' = manager list level
+
+// ── Date filter state ──
+let _dateFrom = '', _dateTo = '';
+let _viewMths = ALL_MONTHS;
+
+function _computeViewMths() {{
+  const from = _dateFrom || MONTH_BOUNDS[Math.min(...ALL_MONTHS)][0];
+  const to   = _dateTo   || MONTH_BOUNDS[Math.max(...ALL_MONTHS)][1];
+  if(!_dateFrom && !_dateTo) return ALL_MONTHS;
+  return ALL_MONTHS.filter(mn => {{ const [s,e] = MONTH_BOUNDS[mn]; return from <= e && to >= s; }});
+}}
+function _onDateFilter() {{
+  _dateFrom = document.getElementById('f-date-from').value;
+  _dateTo   = document.getElementById('f-date-to').value;
+  document.getElementById('ov-date-clear-btn').style.display = (_dateFrom || _dateTo) ? '' : 'none';
+  render();
+}}
+function _clearDateFilter() {{
+  _dateFrom = ''; _dateTo = '';
+  document.getElementById('f-date-from').value = '';
+  document.getElementById('f-date-to').value   = '';
+  document.getElementById('ov-date-clear-btn').style.display = 'none';
+  render();
+}}
+
+// ── Daily pool builder (day-level date filter) ──
+function _buildDailyPool(type, region) {{
+  const from = _dateFrom || MONTH_BOUNDS[Math.min(...ALL_MONTHS)][0];
+  const to   = _dateTo   || MONTH_BOUNDS[Math.max(...ALL_MONTHS)][1];
+  const refRows = {{}};
+  for(const r of DATA) {{
+    if(!_viewMths.includes(r.month) || !r.mgr) continue;
+    if(!refRows[r.email]) refRows[r.email] = {{target:0,cov:0,assigned:0,net_gain:0,renewed:0,pend_ren:0,_latest:null}};
+    refRows[r.email].target   += r.target;
+    refRows[r.email].cov      += r.cov;
+    refRows[r.email].assigned += r.assigned;
+    refRows[r.email].net_gain += r.net_gain;
+    refRows[r.email].renewed  += r.renewed;
+    refRows[r.email].pend_ren += r.pend_ren;
+    if(!refRows[r.email]._latest || r.month > refRows[r.email]._latest.month) refRows[r.email]._latest = r;
+  }}
+  const pool = [];
+  for(const [email, ref] of Object.entries(refRows)) {{
+    const lr = ref._latest;
+    let c=0,p=0,q=0,t=0,v=0,days=0;
+    if(DAILY_METRICS[email]) {{
+      for(const [d,dc,dp,dq,dt_,dv] of DAILY_METRICS[email]) {{
+        if(d >= from && d <= to) {{ c+=dc; p+=dp; q+=dq; t+=dt_; v+=dv; days++; }}
+      }}
+    }}
+    pool.push({{...lr, coll:c, pkg:p, uqc:q, dtt:t, vm:v, uvm:v, days:Math.max(days,1),
+      target:ref.target, cov:ref.cov, assigned:ref.assigned, net_gain:ref.net_gain,
+      renewed:ref.renewed, pend_ren:ref.pend_ren}});
+  }}
+  return pool.filter(r => applyFilters([r], type, region).length > 0);
+}}
 
 function drillOvMonth(mn) {{
   _ovDrillMonth = mn;
@@ -2093,6 +2217,7 @@ function render() {{
   const type   = document.getElementById('f-type').value;
   const region = document.getElementById('f-region').value;
 
+  _viewMths = _computeViewMths();
   _ovSetBreadcrumb();
 
   // Drill-down: TL cards for a manager
@@ -2104,6 +2229,74 @@ function render() {{
   // Drill-down: manager cards for a month
   if(_ovDrillMonth !== 0) {{
     renderOvMgrCards(type, region);
+    return;
+  }}
+
+  // Date filter active → aggregate across date range using daily data
+  if(_dateFrom || _dateTo) {{
+    _ovDrillMonth = 0; _ovDrillMgr = ''; _ovSetBreadcrumb();
+    document.getElementById('ov-report-cards').style.display = '';
+    document.getElementById('ov-single-top').style.display = 'none';
+    document.getElementById('ov-single-month').style.display = 'none';
+    if(collChart) collChart.destroy();
+    if(tvaChart)  tvaChart.destroy();
+    const pool = Object.keys(DAILY_METRICS).length > 0
+      ? _buildDailyPool(type, region)
+      : applyFilters(DATA.filter(r => _viewMths.includes(r.month) && r.mgr !== ''), type, region);
+    const m    = calcMetrics(pool);
+    const isTS = type === 'ts';
+    const mnRev = _viewMths.reduce((s,mn) => s+(getRevenue(Object.keys(REV_TL),mn,type,region)||0),0)||0;
+    const tile = (label, val, sub, highlight) =>
+      `<div class="kpi-card${{highlight?' highlight':''}}" style="padding:11px 13px">
+        <div class="kpi-label" style="font-size:9.5px">${{label}}</div>
+        <div class="kpi-val" style="font-size:19px">${{val}}</div>
+        ${{sub ? `<div class="kpi-sub" style="font-size:10px;margin-top:3px;line-height:1.35">${{sub}}</div>` : ''}}
+      </div>`;
+    const cashPerEmp = m.bom>0 ? fmt(m.cash/m.bom) : '-';
+    const hardTiles =
+      tile('Cash Collection', fmt(m.cash), 'Target: '+fmt(m.target)+' · /Emp: '+cashPerEmp, true) +
+      tile('TvA', pct(m.cash,m.target), tvaRating(m.tva)) +
+      (mnRev ? tile('Revenue', fmt(mnRev), '') : '') +
+      tile('Packages Sold', m.pkgSold, 'Avg Discount: '+(m.avgDisc>0?Math.round(m.avgDisc*100)+'%':'-')) +
+      tile('Net Client Gain', Math.round(m.netGain), 'Active (EOM): '+m.active) +
+      tile('Productivity', m.bom>0 ? Math.round(m.productivity)+'%' : '-', 'Productive (≥4K): '+m.productive+' / BOM: '+m.bom) +
+      tile('Coverage %', Math.round(m.covPct)+'%', '') +
+      tile('Active Listings', TOTAL_ACTIVE_LISTINGS_SNAPSHOT.toLocaleString(), 'Listings/Agency: '+(m.listingsPerAgency!==null?m.listingsPerAgency.toFixed(1):'-'));
+    const softTiles =
+      tile('Avg UQC / Day', m.avgUqc.toFixed(1), 'Total: '+m.totalUqc.toLocaleString()) +
+      tile('Avg DTT / Day', m.avgDtt.toFixed(1)+' min', 'Total: '+fmt(m.totalDtt)+' min') +
+      (!isTS ? tile('Avg VM / Day', m.avgVm!==null ? m.avgVm.toFixed(1) : 'N/A', 'Total: '+m.totalVm.toLocaleString()) : '');
+    const regionLabel = region !== 'all' ? ' · '+region : '';
+    const totalN = (mnRev?8:7)+(isTS?2:3);
+    const allGrid = `display:grid;grid-template-columns:repeat(${{totalN}},minmax(0,1fr));gap:8px;margin-bottom:16px`;
+    const from = _dateFrom||MONTH_BOUNDS[Math.min(...ALL_MONTHS)][0], to = _dateTo||MONTH_BOUNDS[Math.max(...ALL_MONTHS)][1];
+    const dateLabel = from.slice(5).replace('-','/')+' – '+to.slice(5).replace('-','/');
+    const tilesHtml = `<div class="sec-header"><div class="sec-title">${{dateLabel}}${{regionLabel}} &mdash; ${{pool.length}} consultants</div></div><div style="${{allGrid}}">${{hardTiles}}${{softTiles}}</div>`;
+    const latestMn = Math.max(..._viewMths);
+    let mgrCards = '';
+    for(const mg of Object.keys(MGR_TEAMS||{{}})) {{
+      let p2 = Object.keys(DAILY_METRICS).length > 0
+        ? _buildDailyPool(type, region).filter(r => (MGR_POOL_BY_TEAM&&MGR_POOL_BY_TEAM.has(mg)) ? r.team===mg : r.mgr===mg)
+        : applyFilters(DATA.filter(r => _viewMths.includes(r.month) && (MGR_POOL_BY_TEAM&&MGR_POOL_BY_TEAM.has(mg)?r.team===mg:r.mgr===mg)), type, region);
+      if(p2.length===0) continue;
+      const mm = calcMetrics(p2);
+      const mgrName = MGR_NAMES&&MGR_NAMES[mg] ? MGR_NAMES[mg] : mg;
+      const mgrRev = _viewMths.reduce((s,mn)=>s+(getRevenue(MGR_TEAMS[mg]||[],mn,type,region)||0),0)||0;
+      mgrCards += `<div class="ov-drill-wrap" onclick="_ovDrillMonth=${{latestMn}};drillOvMgr('${{mg}}')">
+        ${{reportCard(mgrName, mg+' &mdash; '+dateLabel+' &mdash; '+p2.length+' consultants', mm, p2.some(r=>r.is_ts), null, 'rc-mgr-card', false, false, '', mgrRev, true)}}
+        <div class="ov-drill-hint">Click to view TL breakdown &#8250;</div></div>`;
+    }}
+    const mgrGrid = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:12px;margin-bottom:26px';
+    const mgrHtml = mgrCards ? `<div class="sec-header" style="margin-top:24px"><div class="sec-title">Manager Breakdown &mdash; ${{dateLabel}}</div></div><div style="${{mgrGrid}}">${{mgrCards}}</div>` : '';
+    document.getElementById('ov-report-cards').innerHTML = tilesHtml+mgrHtml;
+    if(_dateFrom && _dateTo) renderTrendDateRange(_dateFrom, _dateTo, type, region);
+    else renderTrendMonthly(type, region);
+    renderActiveGainChart(type, region, 0);
+    renderPkgOv(0, type);
+    renderEmpProdChart(type, region, 0);
+    initDiscountTrendChart(type, region);
+    document.getElementById('ov-soft-kpi-trends').style.display = '';
+    renderSoftKpiTrends(type, region, 0);
     return;
   }}
 
@@ -2180,12 +2373,13 @@ function render() {{
     tile('BOM (Target>0)', m.bom, '') +
     tile('Productivity', m.bom>0 ? Math.round(m.productivity)+'%' : '-', 'Productive (≥4K): '+m.productive) +
     tile('Coverage %', Math.round(m.covPct)+'%', '') +
+    tile('Active Listings', TOTAL_ACTIVE_LISTINGS_SNAPSHOT.toLocaleString(), 'Listings/Agency: '+(m.listingsPerAgency!==null?m.listingsPerAgency.toFixed(1):'-')) +
     tile('Renewal Rate', (m.renewed+m.pendRen>0?Math.round(m.renewed/(m.renewed+m.pendRen)*100)+'%':'-'), 'Renewed: '+m.renewed+' · Pending: '+m.pendRen);
 
   const softTiles =
     tile('Avg UQC / Day', m.avgUqc.toFixed(1), 'Total: '+m.totalUqc.toLocaleString()) +
     tile('Avg DTT / Day', m.avgDtt.toFixed(1)+' min', 'Total: '+fmt(m.totalDtt)+' min') +
-    (!isTS ? tile('Avg VM / Day', m.avgVm!==null ? m.avgVm.toFixed(1) : 'N/A', 'Total: '+m.totalUvm.toLocaleString()) : '');
+    (!isTS ? tile('Avg VM / Day', m.avgVm!==null ? m.avgVm.toFixed(1) : 'N/A', 'Total: '+m.totalVm.toLocaleString()) : '');
 
   const regionLabel = region !== 'all' ? ' · '+region : '';
   const grid5 = `display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:16px`;
